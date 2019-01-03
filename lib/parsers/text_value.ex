@@ -12,28 +12,47 @@ defmodule MacroCompiler.Parser.TextValue do
 
   defp get_char(limited) do
     if limited do
-      satisfy(char(),
-      fn "\n" -> false;
-        "#" -> false;
-        "," -> false;
-        "(" -> false;
-        ")" -> false;
-        "]" -> false;
-        "{" -> false;
-        "}" -> false;
-        "+" -> false;
-        "-" -> false;
+      satisfy(
+        char(),
+        fn
+          "\n" -> false;
+          "#"  -> false;
+          ","  -> false;
+          "("  -> false;
+          ")"  -> false;
+          "]"  -> false;
+          "{"  -> false;
+          "}"  -> false;
+          "+"  -> false;
+          "-"  -> false;
+          " "  -> false;
 
-          _ -> true
-        end)
+          _    -> true
+        end
+      )
     else
-      satisfy(char(),
-        fn "\n" -> false;
-          "#" -> false;
+      satisfy(
+        char(),
+        fn
+          "\n" -> false;
+          "#"  -> false;
 
-            _ -> true
-        end)
+          _  -> true
+        end
+      )
     end
+  end
+
+  def if_is_not_postfix_if(block) do
+    if_not(
+      sequence([
+        spaces(),
+        string("if"),
+        spaces(),
+        char(?()
+      ]),
+      block
+    )
   end
 
   def parser(limited \\ true) do
@@ -48,7 +67,9 @@ defmodule MacroCompiler.Parser.TextValue do
           ScalarVariable.parser(),
           ArrayVariable.parser(),
           HashVariable.parser(),
-          get_char(limited)
+          if_is_not_postfix_if(
+            get_char(limited)
+          )
         ])
       ),
       fn values -> %TextValue{values: values} end

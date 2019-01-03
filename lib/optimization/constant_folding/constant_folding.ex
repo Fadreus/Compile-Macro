@@ -11,43 +11,67 @@ defmodule MacroCompiler.Optimization.ConstantFolding do
   alias MacroCompiler.Parser.PushCommand
 
 
-  def optimize(ast, symbols_table) do
-    :ets.new(:macro_last_write_variables, [:set, :private, :named_table])
+  def optimize(ast, %{macros: symbols_table_macro}) do
+    tuple_macro_last_write_variables =
+      symbols_table_macro
+      |> Enum.map(&{&1.macro_write.name, &1.macro_write.last_write_variables})
 
-    symbols_table
-    |> Enum.each(
-      &:ets.insert(:macro_last_write_variables,
-        {&1.macro_write.name, &1.macro_write.last_write_variables}
-      )
-    )
+    Process.put(:macro_last_write_variables, tuple_macro_last_write_variables)
 
     optimized_ast =
       ast
       |> Enum.map(
         fn {%Macro{block: block} = node, metadata} ->
-          {%{node | block: optimize_block(block)}, metadata}
+          {%{node | block: optimize_block(block).optimized_block}, metadata}
         end
       )
 
-    :ets.delete(:macro_last_write_variables)
+    Process.put(:macro_last_write_variables, nil)
 
     optimized_ast
   end
 
-  defp optimize_block(block) do
-    {optimized_block, _} =
+  defp optimize_block(block, initial_variables_context\\%{}) do
+    {optimized_block, final_variables_context} =
       Enum.reduce(
         block,
-        {[], %{}},
-        fn (current_node, {nodes, variables_context}) ->
-          {node, updated_new_variables_context} =
-            run(current_node, variables_context)
+        {[], initial_variables_context},
+        fn
+          ({%{block: block} = block_node, metadata}, {nodes, variables_context}) ->
+            %{
+              optimized_block: optimized_block,
+              variables_writen: variables_writen
+            } = optimize_block(block, variables_context)
 
-          {[node | nodes], updated_new_variables_context}
+            {_, variables_context} =
+              variables_context
+              |> Map.split(variables_writen)
+
+            optimized_block_node = %{block_node | block: optimized_block}
+
+            {[{optimized_block_node, metadata} | nodes], variables_context}
+
+          (current_node, {nodes, variables_context}) ->
+            {node, updated_variables_context} =
+              run(current_node, variables_context)
+
+            {[node | nodes], updated_variables_context}
         end
       )
 
-    Enum.reverse(optimized_block)
+    variable_context_differences =
+      initial_variables_context
+      |> Enum.reject(fn {var_name, var_value} ->
+        Map.get(final_variables_context, var_name) == var_value
+      end)
+      |> Enum.map(fn {var_name, _var_value} ->
+        var_name
+      end)
+
+    %{
+      optimized_block: Enum.reverse(optimized_block),
+      variables_writen: variable_context_differences
+    }
   end
 
   defp run({_node, %{ignore: true}} = node, variables_context) do
@@ -123,7 +147,8 @@ defmodule MacroCompiler.Optimization.ConstantFolding do
   end
 
   defp run({%CallCommand{macro: macro}, _} = node, variables_context) do
-    [{_key, last_write_variables}] = :ets.lookup(:macro_last_write_variables, macro)
+    {_macro_name, last_write_variables} =
+      List.keyfind(Process.get(:macro_last_write_variables), macro, 0)
 
     {node, Map.merge(variables_context, last_write_variables)}
   end

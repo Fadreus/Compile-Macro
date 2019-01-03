@@ -22,21 +22,31 @@ defmodule MacroCompiler.SemanticAnalysis do
   alias MacroCompiler.Parser.ValuesCommand
   alias MacroCompiler.Parser.RandCommand
   alias MacroCompiler.Parser.RandomCommand
+  alias MacroCompiler.Parser.PostfixIf
+  alias MacroCompiler.Parser.Condition
+  alias MacroCompiler.Parser.IfBlock
+  alias MacroCompiler.Parser.SingleCheck
 
   alias MacroCompiler.SemanticAnalysis.LatestVariableWrites
+  alias MacroCompiler.SemanticAnalysis.SymbolsTable
 
   import MacroCompiler.SemanticAnalysis.Validates.Variables
   import MacroCompiler.SemanticAnalysis.Validates.Macros
+  import MacroCompiler.SemanticAnalysis.Validates.SpecialVariables
 
   def build_symbols_table(ast) do
-    symbols_table(ast)
-    |> List.flatten
+    symbols_table =
+      symbols_table(ast)
+      |> List.flatten
+
+    %{macros: symbols_table, special_variables: SymbolsTable.list_special_variables(symbols_table)}
   end
 
   def run_validates(symbols_table) do
     List.flatten([
       validate_variables(symbols_table),
-      validate_macros(symbols_table)
+      validate_macros(symbols_table),
+      validate_special_variables(symbols_table)
     ])
   end
 
@@ -231,6 +241,37 @@ defmodule MacroCompiler.SemanticAnalysis do
         variable_read: symbols_table(&1)
       }
     ))
+  end
+
+  defp symbols_table({%PostfixIf{condition: condition, block: block}, _metadata}) do
+    [
+      %{variable_read: symbols_table(condition)},
+      %{variable_read: symbols_table(block)},
+      %{variable_write: symbols_table(block)}
+    ]
+  end
+
+  defp symbols_table({%IfBlock{condition: condition, block: block}, _metadata}) do
+    [
+      %{variable_read: symbols_table(condition)},
+      %{variable_read: symbols_table(block)},
+      %{variable_write: symbols_table(block)}
+    ]
+  end
+
+  defp symbols_table({%Condition{scalar_variable: scalar_variable, value: value}, _metadata}) do
+    [scalar_variable, value]
+    |> Enum.map(&(
+      %{
+        variable_read: symbols_table(&1)
+      }
+    ))
+  end
+
+  defp symbols_table({%SingleCheck{scalar_variable: scalar_variable}, _metadata}) do
+    [
+      %{variable_read: symbols_table(scalar_variable)}
+    ]
   end
 
   defp symbols_table(_undefinedNode) do
